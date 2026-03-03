@@ -8,15 +8,22 @@ const { default: axios } = require("axios");
 
 const app = express();
 
-app.use(express.json());
+app.use(express.json({ limit: "10kb" }));
 app.use(cors());
 
 var counter = 0;
 
 app.post("/sumNumbers", (req, res) => {
+  const numOne = Number.parseInt(req.body.numOne, 10);
+  const numTwo = Number.parseInt(req.body.numTwo, 10);
+
+  if (!Number.isFinite(numOne) || !Number.isFinite(numTwo)) {
+    return res.status(400).json({ error: "numOne and numTwo must be valid integers" });
+  }
+
   counter++;
   return res.status(200).json({
-    result: parseInt(req.body.numOne) + parseInt(req.body.numTwo),
+    result: numOne + numTwo,
     serverName: req.headers.host,
     counter,
   });
@@ -34,7 +41,10 @@ app.post("/getData", (req, res) => {
         counter,
       });
     })
-    .catch((err) => console.log(err));
+    .catch((err) => {
+      console.error("Error fetching data from upstream API", err.message);
+      return res.status(502).json({ error: "Unable to fetch upstream data" });
+    });
 });
 
 module.exports = app;
