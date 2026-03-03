@@ -55,9 +55,10 @@ proxy.on("proxyReq", function (proxyReq, req, res, options) {
     //In order for the request to pass through the proxy to the server, set the headers of the request
     // so that it can read JSON data and set the Host to the chosen server address
     let bodyData = JSON.stringify(req.body);
+    const targetHost = new URL(chosenTarget).host;
     proxyReq.setHeader("Content-Type", "application/json");
     proxyReq.setHeader("Content-Length", Buffer.byteLength(bodyData));
-    proxyReq.setHeader("Host", chosenTarget)
+    proxyReq.setHeader("Host", targetHost);
     proxyReq.write(bodyData);
   }
 });
@@ -68,13 +69,17 @@ proxy.on("proxyRes", function (proxyRes, req, res) {
   proxyRes.on("data", function (dataBuffer) {
     var data = dataBuffer.toString("utf8");
 
-    //Counters to keep track of the work load on each server
-    if(JSON.parse(data).serverName == targets[0]) serverOneUsageCounter = JSON.parse(data).counter
-    if(JSON.parse(data).serverName == targets[1]) serverTwoUsageCounter = JSON.parse(data).counter
+    try {
+      const parsedData = JSON.parse(data);
+      //Counters to keep track of the work load on each server
+      if (parsedData.serverName == targets[0]) serverOneUsageCounter = parsedData.counter;
+      if (parsedData.serverName == targets[1]) serverTwoUsageCounter = parsedData.counter;
 
-    //If the request is made to "/getData", store the response in the cache
-    if (proxyRes.client._httpMessage.path == "/getData")
-      myCache.set("todos", data);
+      //If the request is made to "/getData", store the response in the cache
+      if (proxyRes.client._httpMessage.path == "/getData") myCache.set("todos", data);
+    } catch (error) {
+      // Ignore non-JSON responses
+    }
   });
 
   //Modify the response received from the server, adding the server usage percentage to the 
@@ -95,8 +100,8 @@ proxy.on("proxyRes", function (proxyRes, req, res) {
 });
 
 const proxyApp = express();
-proxyApp.use(express.json());
-proxyApp.use(express.urlencoded({ extended: true }));
+proxyApp.use(express.json({ limit: "10kb" }));
+proxyApp.use(express.urlencoded({ extended: true, limit: "10kb" }));
 proxyApp.use(cors());
 
 //The "/parseYaml" endpoint is called only once, on the applications first render.
@@ -117,16 +122,25 @@ proxyApp.get("/parseYaml", (req, res) => {
 //Based on the clients decision either select the load balancing strategy, 
 //or directly set the server to respond to the request
 proxyApp.use(function (req, res) {
-  
   switch (req.body.loadBalancer) {
     case "random":
-      chosenTarget = randomLoadBalancer(); break;
+      chosenTarget = randomLoadBalancer();
+      break;
     case "roundrobin":
-      chosenTarget = roundRobinBalancer(); break;
+      chosenTarget = roundRobinBalancer();
+      break;
     case "one":
-      chosenTarget = targets[0]; break;
+      chosenTarget = targets[0];
+      break;
     case "two":
-      chosenTarget = targets[1]; break;
+      chosenTarget = targets[1];
+      break;
+    default:
+      return res.status(400).json({ error: "Invalid load balancer selection" });
+  }
+
+  if (!chosenTarget) {
+    return res.status(503).json({ error: "No upstream targets configured" });
   }
 
   proxy.web(req, res, { target: chosenTarget });
